@@ -1,0 +1,11 @@
+# Ignore Python junk
+__pycache__/
+*.py[cod]
+venv/
+.env
+
+# Ignore Mac/Windows junk
+.DS_Store
+Thumbs.db
+
+*.pkl
