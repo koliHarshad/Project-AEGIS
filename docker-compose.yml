@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  # --- SERVICE 1: THE DATABASE ---
+  db:
+    image: postgres:15
+    container_name: aegis_db_container
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5435:5432"  # Allows you to see the DB from your laptop
+    volumes:
+      - ./postgres_data_v2:/var/lib/postgresql/data # Saves data to your laptop folder
+    networks:
+      - aegis_net
+
+  # --- SERVICE 2: THE WORKER (Your Code) ---
+  ingestion:
+    build: .  # Look for the Dockerfile in the current directory
+    container_name: aegis_ingestion_container
+    command: python src/backend/ingestion.py  # The command to run your script
+    volumes:
+      - .:/app  # The "Magic Window": Connects your laptop code to the container
+    depends_on:
+      - db      # Wait for the database to start first
+    environment:
+      # These variables override the defaults in your python script
+      DB_HOST: ${DB_HOST}
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASS: ${POSTGRES_PASSWORD}
+    networks:
+      - aegis_net
+
+networks:
+  aegis_net:
+    driver: bridge

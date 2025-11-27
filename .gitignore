@@ -9,3 +9,5 @@ venv/
 Thumbs.db
 
 *.pkl
+postgres_data/
+postgres_data_v2/
