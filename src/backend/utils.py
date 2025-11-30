@@ -37,14 +37,11 @@ def clean_solar_data(df: pd.DataFrame) -> pd.DataFrame:
     df = df.interpolate(method='linear', limit_direction='both')
 
     # handling time columns
-    df['Observed_time'] = pd.to_datetime(
-        df['Year'].astype(str) + '-' + df['DOY'].astype(str) + '-' + df['Hour'].astype(str), 
-        format='%Y-%j-%H'
-        )
+    if 'time_tag' in df.columns:
+        df['observed_time'] = pd.to_datetime(df['time_tag'])
+        df = df.set_index('observed_time')
 
-    df = df.drop(columns=['Year', 'DOY', 'Hour'])
-    # SET IT AS THE INDEX
-    df = df.set_index('Observed_time')
+    df = df.drop(columns=['time_tag'], errors='ignore')
 
     df = df.dropna()
     
@@ -77,6 +74,7 @@ def add_lag_features(df: pd.DataFrame) -> pd.DataFrame:
     
     # Safety Check: Need 6h history (72 rows)
     if len(df) < 72:
+        print("⚠️ Not enough data to create lag features. Sending data without lag features.")
         return df  # Not enough data to create lag features
     
     # calculating 1h 3h, 6h lag features
