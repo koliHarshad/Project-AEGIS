@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import joblib
 import pandas as pd
 import psycopg2
@@ -23,8 +23,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(current_dir, '../ml_model/solar_shield_model.pkl')
 
 # 4. API ENDPOINTS
-URL_PLASMA = "https://services.swpc.noaa.gov/products/solar-wind/plasma-5-minute.json"
-URL_MAG = "https://services.swpc.noaa.gov/products/solar-wind/mag-5-minute.json"
+URL_PLASMA = "https://services.swpc.noaa.gov/products/solar-wind/plasma-1-day.json"
+URL_MAG = "https://services.swpc.noaa.gov/products/solar-wind/mag-1-day.json"
 
 def get_db_connection():
     """Helper to connect to Postgres."""
@@ -108,7 +108,7 @@ def run_pipeline():
         last_saved = pd.to_datetime(last_saved)
 
         # since we need 6 hours of "previous" data for calculating lags
-        buffer_time = last_saved - datetime.timedelta(hours=6)
+        buffer_time = last_saved - timedelta(hours=6)
 
         # then slicing the dataframe not from last saved, but from buffer time i.e., 6 hours before
         df_after_sclicing = df[df.index > buffer_time].copy()
@@ -179,7 +179,7 @@ def run_pipeline():
                 float(row['Bz']),
                 float(row['Scalar_B']),
                 float(row['kp_pred']),
-                row['impact_time']
+                row['Impact_Time']
             ))
     
         conn.commit()

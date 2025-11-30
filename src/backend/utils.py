@@ -43,6 +43,15 @@ def clean_solar_data(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.drop(columns=['time_tag'], errors='ignore')
 
+    # converting 1 min data to 5 min data by resampling
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df = df[numeric_cols].resample('5min').mean()
+    print(f"Resampled to 5min data. Rows now: {len(df)}")
+
+    # F10.7 Handling
+    if 'F10_7' not in df.columns:
+        df['F10_7'] = 150.0  # default value if not present
+
     df = df.dropna()
     
     return df
