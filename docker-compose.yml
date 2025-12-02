@@ -36,6 +36,22 @@ services:
     networks:
       - aegis_net
 
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile
+    # OVERRIDE: This command runs the Dev Server, not the static build
+    command: npm run dev -- --host 
+    ports:
+      - "5173:5173"
+    volumes:
+      # THE MAGIC: This syncs your local folder to the container
+      - ./src/frontend:/app
+      # This prevents your local empty node_modules from breaking the container
+      - /app/node_modules
+    networks:
+      - aegis_net
+
 networks:
   aegis_net:
     driver: bridge
