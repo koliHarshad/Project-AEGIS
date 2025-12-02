@@ -1,0 +1,27 @@
+# 1. Version Control (Huge folder, never copy this)
+.git/
+
+# 2. Local Python Environments (These are redundant and huge)
+venv/
+env/
+.venv/
+
+# 3. Python Cache (Useless garbage files)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 4. Notebooks (Usually not needed for the app to run)
+.ipynb_checkpoints/
+*.ipynb
+
+# 5. Database Data (Never copy your actual database files into the app image!)
+postgres_data_v2/
+
+# 6. Frontend Junk (Don't copy frontend node_modules into the Backend image)
+src/frontend/node_modules/
+src/frontend/dist/
+
+# 7. Heavy Models (Let the volume handle this for now)
+*.pkl
