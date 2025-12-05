@@ -2,12 +2,44 @@ import React, { useRef, useState, useMemo, useEffect } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 
-// --- HELPER: CALCULATE SUN POSITION ---
+// --- 1. TEXTURE GENERATOR (The "Nebula" Painter) ---
+// This creates a random, smoky cloud texture in memory
+const generateCloudTexture = () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; 
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+
+  // 1. Base transparent background
+  ctx.fillStyle = 'rgba(0,0,0,0)';
+  ctx.fillRect(0, 0, 512, 512);
+
+  // 2. Draw random "Puffs"
+  for (let i = 0; i < 30; i++) {
+    const x = Math.random() * 512;
+    const y = Math.random() * 512;
+    const radius = 50 + Math.random() * 100;
+    
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    // Core: Solar Orange/Red
+    gradient.addColorStop(0, 'rgba(255, 100, 50, 0.8)'); 
+    // Edge: Transparent
+    gradient.addColorStop(1, 'rgba(255, 50, 0, 0)'); 
+    
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return new THREE.CanvasTexture(canvas);
+};
+
+// --- HELPER: SUN POSITION ---
 const getSunPosition = (date) => {
   const now = date || new Date();
   const hours = now.getUTCHours() + (now.getUTCMinutes() / 60);
   const angle = ((hours - 12) * 15) * (Math.PI / 180); 
-  const distance = 500; 
+  const distance = 400; 
   return {
     x: Math.sin(angle) * distance,
     y: 0, 
@@ -19,7 +51,11 @@ function App() {
   const globeEl = useRef();
   const [simulationTime, setSimulationTime] = useState(new Date());
 
-  // 1. MATERIAL
+  // 1. GENERATE CLOUD TEXTURES (Once)
+  const cloudMap2 = useMemo(() => generateCloudTexture(), []);
+  const cloudMap3 = useMemo(() => generateCloudTexture(), []);
+
+  // 2. EARTH MATERIAL
   const earthMaterial = useMemo(() => {
     return new THREE.MeshStandardMaterial({
       color: 0xffffff,
@@ -29,58 +65,48 @@ function App() {
     });
   }, []);
 
-  // 2. DATA
-  const layerData = useMemo(() => [{ type: 'shield' }, { type: 'storm'} ], []);
-  // 3. CLOUD PARTICLES (Fewer, Tighter Cluster)
-  const solarCloud = useMemo(() => {
-    // Reduced count to 40 for a single "Blob" feel
-    return Array.from({ length: 40 }).map((_, i) => ({
-      type: 'cloud',
-      id: i,
-      progress: Math.random(), 
-      // SPAWN: Start very TIGHT (Cluster width 20 instead of 120)
-      // This makes it look like one single cloud mass initially
-      yOffset: (Math.random() - 0.5) * 60, 
-      zOffset: (Math.random() - 0.5) * 60,
-      speed: 0.005 + Math.random() * 0.005
-    }));
-  }, []);
+  // 3. DATA LAYERS (3 Layers of Fog + 1 Shield)
+  const layerData = useMemo(() => [
+    { type: 'shield' }, 
+ 
+    { type: 'nebula', radius: 175, map: cloudMap2, speed: 0.002, opacity: 0.3 }, // Reverse spin
+    { type: 'nebula', radius: 200, map: cloudMap3, speed: 0.002, opacity: 0.21 },
+  ], [cloudMap2, cloudMap3]);
 
-  // 4. GLOBE READY HANDLER
+  // 4. SCENE SETUP
   const handleGlobeReady = () => {
     if (!globeEl.current) return;
     try {
       const scene = globeEl.current.scene();
-
-      // A. KILL GHOST LIGHTS
+      
+      // Cleanup Ghosts
       scene.traverse((obj) => {
         if (obj.isLight && obj.name !== "sun-light" && obj.name !== "ambient-light") {
-          obj.intensity = 0;
-          obj.visible = false;
+          obj.intensity = 0; obj.visible = false;
         }
       });
 
-      // B. CUSTOM SUN
+      // Sun
       let sunLight = scene.getObjectByName("sun-light");
       if (!sunLight) {
-        sunLight = new THREE.DirectionalLight(0xffffff, 3.0);
+        sunLight = new THREE.DirectionalLight(0xffffff, 4.5);
         sunLight.name = "sun-light";
         scene.add(sunLight);
       }
       const pos = getSunPosition(new Date());
       sunLight.position.set(pos.x, pos.y, pos.z);
 
-      // C. AMBIENT LIGHT
+      // Ambient
       let ambientLight = scene.getObjectByName("ambient-light");
       if (!ambientLight) {
-        ambientLight = new THREE.AmbientLight(0xffffff, 0.3); 
+        ambientLight = new THREE.AmbientLight(0xffffff, 0.4); 
         ambientLight.name = "ambient-light";
         scene.add(ambientLight);
       }
     } catch (e) { console.error(e); }
   };
 
-  // 5. UPDATE LOOP
+  // UPDATE LOOP
   useEffect(() => {
     if (!globeEl.current) return;
     const scene = globeEl.current.scene();
@@ -91,10 +117,8 @@ function App() {
     }
   }, [simulationTime]);
 
-
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden">
-      
       <Globe
         ref={globeEl}
         onGlobeReady={handleGlobeReady}
@@ -105,88 +129,51 @@ function App() {
         atmosphereAltitude={0.2}
         globeMaterial={earthMaterial}
 
-        customLayerData={[...layerData, ...solarCloud]} 
+        customLayerData={layerData} 
 
         // A. BUILD SHAPES
         customThreeObject={(d) => {
           
-          // --- SHIELD ---
+          // --- SHIELD (The Boundary) ---
           if (d.type === 'shield') {
-            const geometry = new THREE.SphereGeometry(137, 64, 64);
-            
-            // Morph: Less squashing on the nose so it remains visible
+            const geometry = new THREE.SphereGeometry(130, 64, 64);
+            // Morph shield to have a tail
             const positions = geometry.attributes.position;
             for (let i = 0; i < positions.count; i++) {
-              const z = positions.getZ(i);
-              if (z < 0) {
-                 positions.setZ(i, z * 2.9); // Tail stretch
-              } else {
-                 positions.setZ(i, z * 1.02); // Almost full roundness on nose
-              }
+               const z = positions.getZ(i);
+               if (z < 0) positions.setZ(i, z * 3.0); // Stretch tail
             }
             geometry.computeVertexNormals();
-
-            const material = new THREE.MeshPhongMaterial({
+            
+            return new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
               color: 0x44aaff,
               transparent: true,
-              opacity: 0.25, // Increased opacity to make Sun-side visible
+              opacity: 0.3, // Faint
               side: THREE.DoubleSide,
-              shininess: 100,
               depthWrite: false, 
-            });
-            return new THREE.Mesh(geometry, material);
+            }));
           }
 
-          // --- CLOUD ---
-          if (d.type === 'cloud') {
-            const canvas = document.createElement('canvas');
-            canvas.width = 32; canvas.height = 32;
-            const context = canvas.getContext('2d');
-            const gradient = context.createRadialGradient(16, 16, 0, 16, 16, 16);
-            gradient.addColorStop(0, 'rgba(255, 180, 50, 1)'); 
-            gradient.addColorStop(1, 'rgba(255, 100, 0, 0)'); 
-            context.fillStyle = gradient;
-            context.fillRect(0, 0, 32, 32);
-
-            const texture = new THREE.CanvasTexture(canvas);
-            const material = new THREE.SpriteMaterial({ 
-              map: texture, 
-              color: 0xffaa00,
-              transparent: true,
-              opacity: 0.7,
-              blending: THREE.AdditiveBlending 
-            });
+          // --- NEBULA (The Storm) ---
+          if (d.type === 'nebula') {
+            // Use a "Hemisphere" geometry so it only covers the sun side
+            // Radius, WidthSeg, HeightSeg, PhiStart, PhiLength (PI = 180 deg / Half Sphere)
+            const geometry = new THREE.SphereGeometry(d.radius, 64, 64, 0, Math.PI * 2, 0, Math.PI / 3);
             
-            const sprite = new THREE.Sprite(material);
-            // Reduced size back to 5 (similar to original particles)
-            sprite.scale.set(8, 8, 1); 
-            return sprite;
-          }
-
-          if (d.type === 'storm') {
-            const geometry = new THREE.SphereGeometry(169, 64, 64);
-            
-            // Morph: Less squashing on the nose so it remains visible
-            const positions = geometry.attributes.position;
-            for (let i = 0; i < positions.count; i++) {
-              const z = positions.getZ(i);
-              if (z < 0) {
-                 positions.setZ(i, z * -0.3); // Tail stretch
-              } else {
-                 positions.setZ(i, z * 0.3); // Almost full roundness on nose
-              }
-            }
-            geometry.computeVertexNormals();
-
-            const material = new THREE.MeshPhongMaterial({
-              color: 0xffaa00,
+            const material = new THREE.MeshBasicMaterial({
+              map: d.map,           // Use our generated cloud texture
+              color: 0xffaa00,      // Solar tint
               transparent: true,
-              opacity: 0.39, // Increased opacity to make Sun-side visible
+              opacity: d.opacity,
               side: THREE.DoubleSide,
-              shininess: 80,
-              depthWrite: false, 
+              blending: THREE.AdditiveBlending, // Glow effect
+              depthWrite: false,    // Soft blending
             });
-            return new THREE.Mesh(geometry, material);
+            
+            const mesh = new THREE.Mesh(geometry, material);
+            // Rotate geometry so the "Cap" faces forward initially
+            mesh.geometry.rotateX(-Math.PI / 2); 
+            return mesh;
           }
         }}
 
@@ -194,60 +181,17 @@ function App() {
         customThreeObjectUpdate={(obj, d) => {
           const sunPos = getSunPosition(simulationTime);
 
-          // --- SHIELD ---
           if (d.type === 'shield') {
             obj.lookAt(sunPos.x, sunPos.y, sunPos.z);
           }
 
-          // --- CLOUD ---
-          if (d.type === 'cloud') {
-            d.progress += d.speed;
-            if (d.progress > 1.0) d.progress = 0;
-
-            const t = d.progress;
+          if (d.type === 'nebula') {
+            // 1. Always face the sun
+            obj.lookAt(-sunPos.x, -sunPos.y, -sunPos.z);
             
-            // 1. Center Line Position (Sun -> Earth)
-            const cx = sunPos.x * (1 - t);
-            const cy = sunPos.y * (1 - t);
-            const cz = sunPos.z * (1 - t);
-
-            // 2. FLOW LOGIC (The "Splash")
-            // If we are far from Earth (t < 0.7), stay TIGHT (Beam).
-            // If we hit Earth (t > 0.7), spread WIDE (Splash).
-            let spreadMultiplier = 1.0;
-            
-            if (t > 0.75) {
-                // Rapidly expand from 1.0 to 6.0 width
-                spreadMultiplier = 1.0 + ((t - 0.75) * 20); 
-            }
-
-            // Apply position
-            Object.assign(obj.position, {
-              x: cx, 
-              // Spread expands as we pass the shield
-              y: cy + (d.yOffset * spreadMultiplier), 
-              z: cz + (d.zOffset * spreadMultiplier)  
-            });
-          }
-
-          if (d.type === 'storm') {
-            // 1. Calculate a position slightly towards the sun
-            // Shield Radius (102) + Storm Radius (70) = ~170 to touch tips.
-            // We set it to 160 so they slightly overlap (Impact Visual)
-            
-            // Normalize sun vector and multiply by distance
-            const offsetDistance = 100; 
-            const dist = Math.sqrt(sunPos.x**2 + sunPos.y**2 + sunPos.z**2);
-            
-            const newX = (sunPos.x / dist) * offsetDistance;
-            const newY = (sunPos.y / dist) * offsetDistance;
-            const newZ = (sunPos.z / dist) * offsetDistance;
-
-            obj.position.set(newX, newY, newZ);
-
-            // 2. Rotate to face the shield
-            // It points its "Tail" (Z>0) towards the Sun
-            obj.lookAt(sunPos.x, sunPos.y, sunPos.z);          
+            // 2. Spin locally on Z axis (Turbulence)
+            // We use the time + speed to rotate it continuously
+            obj.rotateZ(d.speed); 
           }
         }}
       />
@@ -255,15 +199,11 @@ function App() {
       {/* HUD */}
       <div className="absolute z-10 top-0 left-0 w-full p-6 pointer-events-none flex justify-between">
         <header className="border-l-4 border-cyan-500 pl-4 bg-black/30 backdrop-blur-sm pr-6">
-          <h1 className="text-4xl text-white font-bold tracking-widest font-mono drop-shadow-md">
-            SOLAR SENTINEL
-          </h1>
-          <p className="text-cyan-400 text-sm font-mono tracking-widest">
-            MAGNETOSPHERE INTEGRITY: 100%
-          </p>
+          <h1 className="text-4xl text-white font-bold tracking-widest font-mono drop-shadow-md">SOLAR SENTINEL</h1>
+          <p className="text-cyan-400 text-sm font-mono tracking-widest">MAGNETOSPHERE INTEGRITY: 100%</p>
         </header>
       </div>
-
+      
       {/* SLIDER */}
       <div className="absolute z-10 bottom-0 w-full p-6 bg-gradient-to-t from-black to-transparent">
         <div className="flex items-center gap-4">
@@ -277,9 +217,6 @@ function App() {
                setSimulationTime(newDate);
             }}
           />
-          <span className="text-white font-mono font-bold">
-            {simulationTime.getUTCHours().toString().padStart(2, '0')}:00
-          </span>
         </div>
       </div>
 
