@@ -6,3 +6,5 @@ scikit-learn
 psycopg2-binary
 streamlit
 plotly
+fastapi
+uvicorn

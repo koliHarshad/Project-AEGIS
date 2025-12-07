@@ -52,6 +52,24 @@ services:
     networks:
       - aegis_net
 
+  api:
+    build: .
+    container_name: aegis_api_container
+    command: uvicorn src.backend.api:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_NAME: ${POSTGRES_DB}
+      DB_USER: ${POSTGRES_USER}
+      DB_PASS: ${POSTGRES_PASSWORD}
+    networks:
+      - aegis_net
+
 networks:
   aegis_net:
     driver: bridge
