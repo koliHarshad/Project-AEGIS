@@ -3,14 +3,34 @@ import Globe from 'react-globe.gl';
 import * as THREE from 'three';
 
 // ==========================================
-// SECTION 1: UTILITY TOOLS (Outside Component)
+// SECTION 1: UTILITY TOOLS
 // ==========================================
 
-/**
- * 1. TEXTURE PAINTER
- * Creates a "smoky" dot texture in memory.
- * We use this for the particles so they look like soft gas, not squares.
- */
+const parseTimestamp = (dateString) => {
+  if (!dateString) return null;
+  let s = dateString.toString().replace(' ', 'T');
+  if (s.includes('.')) {
+      const parts = s.split('.');
+      s = `${parts[0]}.${parts[1].substring(0, 3)}`;
+  }
+  if (!s.endsWith('Z')) s += 'Z';
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d.getTime();
+};
+
+const getSunPosition = (date) => {
+  const now = date || new Date();
+  const hours = now.getUTCHours() + (now.getUTCMinutes() / 60);
+  const angle = ((hours - 12) * 15) * (Math.PI / 180); 
+  const distance = 400; 
+  return {
+    x: Math.sin(angle) * distance,
+    y: 0, 
+    z: Math.cos(angle) * distance
+  };
+};
+
+// TEXTURE GENERATORS
 const generateCloudTexture = () => {
   const canvas = document.createElement('canvas');
   canvas.width = 256; canvas.height = 256; // Low res is fine for clouds
@@ -39,175 +59,188 @@ const generateCloudTexture = () => {
   return new THREE.CanvasTexture(canvas);
 };
 
-const generateparticleTexture = () => {
+const generateParticleTexture = () => {
   const canvas = document.createElement('canvas');
   canvas.width = 32; canvas.height = 32;
   const context = canvas.getContext('2d');
   const gradient = context.createRadialGradient(16, 16, 0, 16, 16, 16);
-  gradient.addColorStop(0, 'rgba(255, 180, 50, 1)'); 
-  gradient.addColorStop(1, 'rgba(255, 100, 0, 0)'); 
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)'); 
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)'); 
   context.fillStyle = gradient;
   context.fillRect(0, 0, 32, 32);
-
   return new THREE.CanvasTexture(canvas);
 }
-/**
- * 2. ASTROPHYSICS ENGINE
- * Calculates where the Sun is based on the time of day.
- * Distance is fixed at 400 units so it sits outside the Shield.
- */
-const getSunPosition = (date) => {
-  const now = date || new Date();
-  // Convert time to angle (12:00 UTC = 0 degrees)
-  const hours = now.getUTCHours() + (now.getUTCMinutes() / 60);
-  const angle = ((hours - 12) * 15) * (Math.PI / 180); 
-  const distance = 600; 
-  return {
-    x: Math.sin(angle) * distance,
-    y: 0, 
-    z: Math.cos(angle) * distance
-  };
-};
 
 
 // ==========================================
-// SECTION 2: THE MAIN COMPONENT
+// SECTION 2: MAIN COMPONENT
 // ==========================================
 
 function App() {
   const globeEl = useRef();
+  const [processedData, setProcessedData] = useState([]);
+  const [sliderIndex, setSliderIndex] = useState(0);
+  const [currentData, setCurrentData] = useState(null); 
   const [simulationTime, setSimulationTime] = useState(new Date());
 
   // ------------------------------------------
-  // A. THE WAREHOUSE (useMemo)
-  // We build these heavy objects ONCE and reuse them forever.
+  // ASSETS
   // ------------------------------------------
-
-  // A1. The Cloud Texture (The Paint)
   const cloud1_Texture = useMemo(() => generateCloudTexture(), []);
   const cloud2_Texture = useMemo(() => generateCloudTexture(), []);
-  const particle_Texture = useMemo(() => generateparticleTexture(), []);
+  const particleTexture = useMemo(() => generateParticleTexture(), []);
 
-  // A2. The Geometries (The Shapes)
   const geometries = useMemo(() => {
-    // 1. SHIELD GEOMETRY (The Wall)
+    // 1. SHIELD
     const shieldGeo = new THREE.SphereGeometry(130, 64, 64);
-    const pos1 = shieldGeo.attributes.position;
-    for (let i = 0; i < pos1.count; i++) {
-       const z = pos1.getZ(i);
-       if (z < 0) pos1.setZ(i, z * 3.0); // Stretch the tail
+    const pos = shieldGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+       const z = pos.getZ(i);
+       if (z < 0) pos.setZ(i, z * 3.0); 
     }
     shieldGeo.computeVertexNormals();
 
-    // 2. STORM GEOMETRY (The Projectile)
+    // 2. STORM CLOUDS (Restored!)
+    // These are the static bow-shock shapes in front of the shield
     const storm1_geo = new THREE.SphereGeometry(175, 64, 64, 0, Math.PI * 2, 0, Math.PI / 3);
-    storm1_geo.rotateX(- Math.PI / 2); // Flip to face the Sun
-    const storm2_geo = new THREE.SphereGeometry(200, 64, 64, 0, Math.PI * 3, 0, Math.PI / 3);
-    storm2_geo.rotateX(- Math.PI/ 2); // Flip to face the Sun
+    storm1_geo.rotateX(-Math.PI / 2); // Face forward
+    
+    const storm2_geo = new THREE.SphereGeometry(200, 64, 64, 0, Math.PI * 2, 0, Math.PI / 3);
+    storm2_geo.rotateX(-Math.PI / 2);
+
     return { shield: shieldGeo, storm1: storm1_geo, storm2: storm2_geo };
   }, []);
 
-  // A3. The Materials (The Skin)
   const materials = useMemo(() => {
     return {
-      earth: new THREE.MeshStandardMaterial({
-        color: 0xffffff, roughness: 1.0, metalness: 0.1, emissive: 0x000000
+      earth: new THREE.MeshStandardMaterial({ 
+          color: 0xffffff, roughness: 1.0, metalness: 0.1, emissive: 0x000000
       }),
-      shield: new THREE.MeshPhongMaterial({
-        color: 0x44aaff, transparent: true, opacity: 0.3, 
-        side: THREE.DoubleSide, depthWrite: false, shininess: 100
+      shield: new THREE.MeshPhongMaterial({ 
+          color: 0x44aaff, transparent: true, opacity: 0.3, 
+          side: THREE.DoubleSide, depthWrite: false, shininess: 100 
       }),
+      // STORM CLOUDS MATERIALS (Restored!)
       storm1: new THREE.MeshPhongMaterial({
-        map: cloud1_Texture, color: 0xffaa00, transparent: true, opacity: 0.2, 
-        side: THREE.DoubleSide, depthWrite: false,shininess: 100, blending: THREE.AdditiveBlending
+        map: cloud1_Texture, color: 0xffaa00, transparent: true, opacity: 0.2, shininess: 100,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending
       }),
       storm2: new THREE.MeshPhongMaterial({
-        map: cloud2_Texture, color: 0xffaa00, transparent: true, opacity: 0.14, 
-        side: THREE.DoubleSide, depthWrite: false,shininess: 100, blending: THREE.AdditiveBlending
-      }),      
-      particle: new THREE.SpriteMaterial({
-        map:particle_Texture ,color: 0xffaa00, transparent: true, opacity: 0.7, depthWrite: false,
-        blending: THREE.AdditiveBlending
+        map: cloud2_Texture, color: 0xff4400, transparent: true, opacity: 0.14, shineiness: 100,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending
+      }),
+      particle: new THREE.SpriteMaterial({ 
+          map: particleTexture, 
+          color: 0xffffff, 
+          transparent: true, 
+          opacity: 0.8, 
+          depthWrite: false, 
+          blending: THREE.AdditiveBlending 
       })
     };
-  }, [cloud1_Texture, cloud2_Texture, particle_Texture]);
+  }, [cloud1_Texture, cloud2_Texture, particleTexture]);
 
-  // A4. The Data Layers (The Instruction List)
+  // ------------------------------------------
+  // LAYERS
+  // ------------------------------------------
   const layerData = useMemo(() => {
-    // 1. The Big Shapes
+    // 1. Static Objects (Shield + Storms)
     const staticLayers = [{ type: 'shield' }, { type: 'storm1' }, { type: 'storm2' }];
     
-    // 2. The Particles (Targeted Storm)
-    // We create 30 particles that act as the "Spray" from the storm
-    const particles = Array.from({ length: 40 }).map((_, i) => ({
+    // 2. Particle Pool
+    const particles = Array.from({ length: 150 }).map((_, i) => ({
       type: 'particle',
       id: i,
-      progress: Math.random(), 
-      // CLUSTER: Keep them tight (Width 15) so they hit a specific region
-      yOffset: (Math.random() - 0.5) * 100, 
-      zOffset: (Math.random() - 0.5) * 100,
-      speed: 0.005 + Math.random() * 0.005
+      offsetX: (Math.random() - 0.5) * 60,
+      offsetY: (Math.random() - 0.5) * 60,
+      offsetZ: (Math.random() - 0.5) * 20,
+      scaleVar: 0.5 + Math.random() * 1.0
     }));
 
     return [...staticLayers, ...particles];
   }, []);
 
-
   // ------------------------------------------
-  // B. SCENE MANAGEMENT (The Stage Crew)
+  // DATA LOGIC
   // ------------------------------------------
+  useEffect(() => {
+    fetch('http://localhost:8000/telemetry/timestamps_particle')
+      .then(res => res.json()) 
+      .then(data => {
+        if(data && data.length > 0) {
+            const processed = data.map(d => {
+                const birth = parseTimestamp(d.timestamp);
+                let impact = parseTimestamp(d.impact_time);
+                if (!impact || impact <= birth) impact = birth + (60 * 60 * 1000);
+                
+                return {
+                    ...d,
+                    birthTime: birth,
+                    impactTime: impact,
+                    totalDuration: impact - birth,
+                    speed: d.speed || 350
+                };
+            }).filter(d => d.birthTime !== null);
 
-  const handleGlobeReady = () => {
-    if (!globeEl.current) return;
-    try {
-      const scene = globeEl.current.scene();
-
-      // 1. Cleanup old lights
-      scene.traverse((obj) => {
-        if (obj.isLight && obj.name !== "sun-light" && obj.name !== "ambient-light") {
-          obj.intensity = 0; obj.visible = false;
+            setProcessedData(processed);
+            const latestIndex = processed.length - 1;
+            setSliderIndex(latestIndex);
+            setSimulationTime(new Date(processed[latestIndex].birthTime));
+            updateSnapshot(data[latestIndex].timestamp);
         }
-      });
+      })
+      .catch(e => console.error(e));
+  }, []);
 
-      // 2. Setup Sun
-      let sunLight = scene.getObjectByName("sun-light");
-      if (!sunLight) {
-        sunLight = new THREE.DirectionalLight(0xffffff, 4.5);
-        sunLight.name = "sun-light";
-        scene.add(sunLight);
-      }
-      const pos = getSunPosition(new Date());
-      sunLight.position.set(pos.x, pos.y, pos.z);
+  const updateSnapshot = (timestamp) => {
+    fetch(`http://localhost:8000/telemetry/snapshot?timestamp=${timestamp}`)
+        .then(res => res.json())
+        .then(data => setCurrentData(data))
+        .catch(e => console.error(e));
+  };
 
-      // 3. Setup Ambient
-      let ambientLight = scene.getObjectByName("ambient-light");
-      if (!ambientLight) {
-        ambientLight = new THREE.AmbientLight(0xffffff, 0.26); 
-        ambientLight.name = "ambient-light";
-        scene.add(ambientLight);
-      }
-    } catch (e) { console.error(e); }
+  const handleSliderChange = (e) => {
+    const idx = parseInt(e.target.value);
+    setSliderIndex(idx);
+    if (processedData[idx]) {
+        const newTime = new Date(processedData[idx].birthTime);
+        setSimulationTime(newTime);
+        updateSnapshot(processedData[idx].timestamp);
+    }
   };
 
   // ------------------------------------------
-  // C. THE RENDER LOOP (The Camera Action)
+  // SCENE LIGHTING
   // ------------------------------------------
+  const handleGlobeReady = () => {
+    if (!globeEl.current) return;
+    const scene = globeEl.current.scene();
 
-  // Update Sun Position when time changes
+    scene.traverse(obj => {
+       if (obj.isLight) obj.visible = false;
+    });
+
+    const sunLight = new THREE.DirectionalLight(0xffffff, 4.5);
+    sunLight.name = "sun-light";
+    scene.add(sunLight);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.26); 
+    scene.add(ambient);
+  };
+
   useEffect(() => {
     if (!globeEl.current) return;
     const scene = globeEl.current.scene();
     const sunLight = scene.getObjectByName("sun-light");
     if (sunLight) {
-      const newPos = getSunPosition(simulationTime);
-      sunLight.position.set(newPos.x, newPos.y, newPos.z);
+        const pos = getSunPosition(simulationTime);
+        sunLight.position.set(pos.x, pos.y, pos.z);
     }
   }, [simulationTime]);
 
 
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden">
-      
       <Globe
         ref={globeEl}
         onGlobeReady={handleGlobeReady}
@@ -217,97 +250,106 @@ function App() {
         atmosphereColor="#3a228a"
         atmosphereAltitude={0.2}
         globeMaterial={materials.earth}
-
         customLayerData={layerData} 
 
-        // ------------------------------------
-        // D. OBJECT BUILDER (Runs ONCE per object)
-        // ------------------------------------
         customThreeObject={(d) => {
-          if (d.type === 'shield') {
-            return new THREE.Mesh(geometries.shield, materials.shield);
-          }
-          if (d.type === 'storm1') {
-            return new THREE.Mesh(geometries.storm1, materials.storm1);
-          }
-          if (d.type === 'storm2') {
-            return new THREE.Mesh(geometries.storm2, materials.storm2);
-          }
-          if (d.type === 'particle') {
-            const sprite = new THREE.Sprite(materials.particle);
-            sprite.scale.set(12, 12, 1); // Size of one puff
-            return sprite;
-          }
+          if (d.type === 'shield') return new THREE.Mesh(geometries.shield, materials.shield);
+          if (d.type === 'storm1') return new THREE.Mesh(geometries.storm1, materials.storm1);
+          if (d.type === 'storm2') return new THREE.Mesh(geometries.storm2, materials.storm2);
+          if (d.type === 'particle') return new THREE.Sprite(materials.particle);
         }}
 
-        // ------------------------------------
-        // E. ANIMATION LOOP (Runs 60x per sec)
-        // ------------------------------------
+        // ===============================================
+        //  RENDER LOOP
+        // ===============================================
         customThreeObjectUpdate={(obj, d) => {
           const sunPos = getSunPosition(simulationTime);
 
-          // 1. SHIELD & STORM (Face the Sun)
+          // 1. ALIGN SHIELD & STORM CLOUDS
           if (d.type === 'shield') {
-            obj.lookAt(sunPos.x, sunPos.y, sunPos.z);
+             obj.lookAt(sunPos.x, sunPos.y, sunPos.z);
+             return;
           }
           if (d.type === 'storm1' || d.type === 'storm2') {
-            obj.lookAt(-sunPos.x, -sunPos.y, -sunPos.z);
+             obj.lookAt(-sunPos.x, -sunPos.y, -sunPos.z);
+             return;
           }
 
-          // 2. PARTICLES (Travel from Sun to Impact Zone)
+          // 2. PARTICLE LOGIC
           if (d.type === 'particle') {
-            d.progress += d.speed;
-            if (d.progress > 1.0) d.progress = 0;
+              const currentTimeMs = simulationTime.getTime();
+              const activeStorms = processedData.filter(storm => 
+                  storm.birthTime < currentTimeMs && storm.impactTime > currentTimeMs
+              );
 
-            const t = d.progress;
-            
-            // Interpolate from Sun(400) to Shield(100)
-            const startX = sunPos.x;
-            const startY = sunPos.y;
-            const startZ = sunPos.z;
+              if (activeStorms.length > 0) {
+                  obj.visible = true;
+                  const myStorm = activeStorms[d.id % activeStorms.length];
 
-            const cx = startX * (1 - t);
-            const cy = startY * (1 - t);
-            const cz = startZ * (1 - t);
+                  const elapsed = currentTimeMs - myStorm.birthTime;
+                  let progress = elapsed / myStorm.totalDuration;
+                  if (progress > 1.0) progress = 1.0; 
+                  if (progress < 0.0) progress = 0.0;
 
-            // "Splash" Logic: Spread out when close to Earth
-            let spread = 1.0;
-            if (t > 0.75) {
-              spread = 1.0 + ((t - 0.75) * 20); 
-            }
-            Object.assign(obj.position, {
-              x: cx, 
-              y: cy + (d.yOffset * spread), 
-              z: cz + (d.zOffset * spread)  
-            });
+                  // VISUALS
+                  const intensity = Math.max(0, Math.min(1, (myStorm.speed - 300) / 500));
+                  const hue = 0.6 - (intensity * 0.6); 
+                  obj.material.color.setHSL(hue, 1.0, 0.5);
+
+                  const baseSize = 8 + (intensity * 15); 
+                  const size = baseSize * d.scaleVar;
+                  obj.scale.set(size, size, 1);
+
+                  // POSITION
+                  const sunPosAtBirth = getSunPosition(new Date(myStorm.birthTime));
+                  const sunDist = Math.sqrt(sunPosAtBirth.x**2 + sunPosAtBirth.y**2 + sunPosAtBirth.z**2);
+                  const dirX = -sunPosAtBirth.x / sunDist;
+                  const dirZ = -sunPosAtBirth.z / sunDist;
+
+                  const travelDist = 400 * progress;
+                  const spread = 0.1 + (progress * 2.0); 
+                  
+                  const px = sunPosAtBirth.x + (dirX * travelDist) + (d.offsetX * spread);
+                  const py = (d.offsetY * spread); 
+                  const pz = sunPosAtBirth.z + (dirZ * travelDist) + (d.offsetZ * spread);
+
+                  const distToEarth = Math.sqrt(px*px + py*py + pz*pz);
+                  if (distToEarth < 130) {
+                      const push = 130 / distToEarth;
+                      obj.position.set(px * push, py * push * 1.5, pz * push * 1.5);
+                  } else {
+                      obj.position.set(px, py, pz);
+                  }
+              } else {
+                  obj.visible = false;
+              }
           }
         }}
       />
 
-      {/* HUD & TIME CONTROL (Keep your existing UI here) */}
-      <div className="absolute z-10 top-0 left-0 w-full p-6 pointer-events-none flex justify-between">
-        <header className="border-l-4 border-cyan-500 pl-4 bg-black/30 backdrop-blur-sm pr-6">
-          <h1 className="text-4xl text-white font-bold tracking-widest font-mono drop-shadow-md">SOLAR SENTINEL</h1>
-          <p className="text-cyan-400 text-sm font-mono tracking-widest">MAGNETOSPHERE INTEGRITY: 100%</p>
-        </header>
+      {/* HUD & CONTROLS */}
+      <div className="absolute bottom-0 w-full p-6 bg-gradient-to-t from-black to-transparent z-10">
+         <div className="text-cyan-400 font-mono text-xs flex justify-between mb-2">
+             <span>PAST (24h)</span>
+             <span className="text-white font-bold">{simulationTime.toUTCString()}</span>
+             <span>NOW</span>
+         </div>
+         <input 
+            type="range" min="0" max={Math.max(0, processedData.length - 1)} step="1"
+            value={sliderIndex}
+            onChange={handleSliderChange}
+            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+         />
       </div>
       
-      {/* SLIDER */}
-      <div className="absolute z-10 bottom-0 w-full p-6 bg-gradient-to-t from-black to-transparent">
-        <div className="flex items-center gap-4">
-          <label className="text-cyan-400 font-mono text-xs">SIMULATION TIME (UTC)</label>
-          <input 
-            type="range" min="0" max="23" step="0.1"
-            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-            onChange={(e) => {
-               const newDate = new Date();
-               newDate.setUTCHours(parseFloat(e.target.value));
-               setSimulationTime(newDate);
-            }}
-          />
-        </div>
+      <div className="absolute top-0 left-0 p-6 z-10 pointer-events-none">
+         <div className="border-l-4 border-cyan-500 pl-4 bg-black/40 backdrop-blur-md pr-6 py-2">
+            <h1 className="text-3xl text-white font-bold tracking-widest font-mono">SOLAR SENTINEL</h1>
+            <p className="text-cyan-400 text-sm font-mono mt-1">
+               {currentData ? `SPEED: ${Math.round(currentData.speed)} km/s` : "OFFLINE"}
+            </p>
+         </div>
       </div>
-
     </div>
   );
 }

@@ -32,7 +32,7 @@ def get_db_connection():
 def read_root():
     return {"status": "System Online", "message": "Solar Sentinel Brain is Active"}
 
-@app.get("/telemetry/timestamps")
+@app.get("/telemetry/timestamps_particle")
 def get_timestamps():
     """
     Returns a list of available time points for the slider.
@@ -41,13 +41,20 @@ def get_timestamps():
         conn = get_db_connection()
         cur = conn.cursor()
         # Get last 24 hours (288 records roughly)
-        cur.execute("SELECT timestamp FROM solar_wind ORDER BY timestamp DESC LIMIT 288")
+        cur.execute("SELECT timestamp, speed, impact_time FROM solar_wind ORDER BY timestamp DESC LIMIT 288")
         rows = cur.fetchall()
         conn.close()
         # Convert list of dicts to list of strings
-        timestamp = [row['timestamp'] for row in rows]
+        time_particle_data = [
+            {
+                "timestamp": row['timestamp'],
+                "speed": row['speed'],
+                "impact_time": row['impact_time']           
+                } 
+            for row in rows
+        ]
         
-        return timestamp[::-1] # Reverses the list 
+        return time_particle_data[::-1] # Reverses the list 
     
     except Exception as e:
         print(f"Error: {e}")
