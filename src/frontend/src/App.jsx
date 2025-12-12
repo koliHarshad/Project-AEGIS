@@ -22,7 +22,7 @@ const getSunPosition = (date) => {
   const now = date || new Date();
   const hours = now.getUTCHours() + (now.getUTCMinutes() / 60);
   const angle = ((hours - 12) * 15) * (Math.PI / 180); 
-  const distance = 400; 
+  const distance = 750; 
   return {
     x: Math.sin(angle) * distance,
     y: 0, 
@@ -71,6 +71,10 @@ const generateParticleTexture = () => {
   return new THREE.CanvasTexture(canvas);
 }
 
+const pseudoRandom = (seed) => {
+    const x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+};
 
 // ==========================================
 // SECTION 2: MAIN COMPONENT
@@ -126,7 +130,7 @@ function App() {
         side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending
       }),
       storm2: new THREE.MeshPhongMaterial({
-        map: cloud2_Texture, color: 0xff4400, transparent: true, opacity: 0.14, shineiness: 100,
+        map: cloud2_Texture, color: 0xff4400, transparent: true, opacity: 0.14, shininess: 100,
         side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending
       }),
       particle: new THREE.SpriteMaterial({ 
@@ -148,7 +152,7 @@ function App() {
     const staticLayers = [{ type: 'shield' }, { type: 'storm1' }, { type: 'storm2' }];
     
     // 2. Particle Pool
-    const particles = Array.from({ length: 150 }).map((_, i) => ({
+    const particles = Array.from({ length: 100 }).map((_, i) => ({
       type: 'particle',
       id: i,
       offsetX: (Math.random() - 0.5) * 60,
@@ -168,20 +172,36 @@ function App() {
       .then(res => res.json()) 
       .then(data => {
         if(data && data.length > 0) {
-            const processed = data.map(d => {
+            const processed = data.map((d, index) => {
                 const birth = parseTimestamp(d.timestamp);
                 let impact = parseTimestamp(d.impact_time);
                 if (!impact || impact <= birth) impact = birth + (60 * 60 * 1000);
                 
+                // --- NEW: IMPACT VECTOR CALCULATION ---
+                // Use index as a seed for stable randomness
+                const randY = pseudoRandom(index * 73); // Random 0.0 to 1.0
+                const randZ = pseudoRandom(index * 42); 
+                
+                // Define the "Target Window" on the shield
+                // Y: -60 (South Pole) to +60 (North Pole)
+                // Z: -30 (Left) to +30 (Right)
+                const targetY = (randY - 0.5) * 120; 
+                const targetZ = (randZ - 0.5) * 60;
+
                 return {
                     ...d,
                     birthTime: birth,
                     impactTime: impact,
                     totalDuration: impact - birth,
-                    speed: d.speed || 350
+                    speed: d.speed || 350,
+                    density: d.density,
+                    bz: d.bz,
+                    kp: d.kp,
+                    y: targetY,
+                    z: targetZ,
                 };
             }).filter(d => d.birthTime !== null);
-
+            
             setProcessedData(processed);
             const latestIndex = processed.length - 1;
             setSliderIndex(latestIndex);
@@ -238,7 +258,60 @@ function App() {
     }
   }, [simulationTime]);
 
+  // HUD helper function
+  // HELPER: Translates raw data into a tactical status message
+  const getSystemStatus = (data) => {
+    if (!data) return { status: "OFFLINE", subtext: "WAITING FOR DATA STREAM...", color: "text-gray-500" };
 
+    const kp = Number(data.kp) || 0;
+    const speed = Number(data.speed) || 0;
+
+    // SCENARIO 1: The "Silent Killer" (Your ML Model's time to shine)
+    // Low Wind Speed (Low Pressure), but High Kp (High Damage)
+    if (speed < 450 && kp >= 5) {
+      return {
+        title: "MAGNETIC BREACH",
+        subtext: "LOW PRESSURE / HIGH INSTABILITY",
+        desc: "ML WARNING: Solar wind is slow, but magnetic alignment is causing shield failure. Invisible threat detected.",
+        color: "text-red-500 animate-pulse",
+        borderColor: "border-red-600"
+      };
+    }
+
+    // SCENARIO 2: Pure Physical Stress
+    // High Wind Speed (High Pressure), but Low Kp (Shield holds)
+    if (speed > 600 && kp < 5) {
+      return {
+        title: "COMPRESSION ALERT",
+        subtext: "HIGH PRESSURE / INTEGRITY STABLE",
+        desc: "Shield is physically compressed by high-speed wind, but defenses are holding. No breach.",
+        color: "text-orange-400",
+        borderColor: "border-orange-500"
+      };
+    }
+
+    // SCENARIO 3: Total Storm (The Big One)
+    if (kp >= 6) {
+      return {
+        title: "CRITICAL FAILURE",
+        subtext: "EXTREME PRESSURE & INSTABILITY",
+        desc: "Severe storm conditions. Shield collapse imminent. Grid warning issued.",
+        color: "text-red-600 animate-pulse",
+        borderColor: "border-red-600"
+      };
+    }
+
+    // SCENARIO 4: Quiet / Normal
+    return {
+      title: "SYSTEMS NOMINAL",
+      subtext: "SOLAR CONDITIONS QUIET",
+      desc: "Magnetosphere stable. Standard monitoring active.",
+      color: "text-cyan-400",
+      borderColor: "border-cyan-500"
+    };
+  };
+
+  const status = getSystemStatus(currentData);
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden">
       <Globe
@@ -264,11 +337,61 @@ function App() {
         // ===============================================
         customThreeObjectUpdate={(obj, d) => {
           const sunPos = getSunPosition(simulationTime);
+          const currentTimeMs = simulationTime.getTime();
 
-          // 1. ALIGN SHIELD & STORM CLOUDS
+          // --- STEP 3: SHIELD COMPRESSION LOGIC ---
+          
+          // 1. Calculate Global Pressure & Max Kp
+          // We check ALL active storms to see if ANY is hitting us right now.
+          let maxPressure = 0;
+          let maxKp = 0;
+
+          // Find active storms
+          const activeStorms = processedData.filter(storm => 
+              storm.birthTime < currentTimeMs && storm.impactTime > currentTimeMs
+          );
+          
+          activeStorms.forEach(s => {
+             const elapsed = currentTimeMs - s.birthTime;
+             const p = elapsed / s.totalDuration;
+             
+             // If storm is AT the shield (Progress 0.9 to 1.0)
+             if (p > 0.9) {
+                 // Simple Pressure Formula: (Density * Speed) / Scaling Factor
+                 // We divide by 6000 so the result is usually between 0.0 and 0.5
+                 const pressure = (s.density * s.speed) / 6000; 
+                 if (pressure > maxPressure) maxPressure = pressure;
+            
+                 // Track the highest alert level
+                 if (s.kp > maxKp) maxKp = s.kp;
+             }
+          });
+
+          // 2. UPDATE SHIELD MESH
           if (d.type === 'shield') {
              obj.lookAt(sunPos.x, sunPos.y, sunPos.z);
-             return;
+             
+             // A. COMPRESSION (Physical Deform)
+             // Base scale is 1.0. We subtract pressure.
+             // We clamp it so it never shrinks below 0.5 (half size)
+             const compression = Math.max(0.87, 1.0 - maxPressure);
+             obj.scale.set(1, 1, compression); 
+
+             // B. COLOR ALERT (Visual Warning)
+             if (maxKp > 6) {
+                // Panic Mode
+                obj.material.color.setHex(0xff0000);
+                // Rapid pulsing (Panic heartbeat)
+                obj.material.opacity = 0.4 + Math.sin(simulationTime.getTime() / 50) * 0.2; 
+              } else if (maxKp > 4) {
+                  // Warning Mode
+                  obj.material.color.setHex(0xffaa00);
+                  obj.material.opacity = 0.3;
+              } else {
+                  // Safe Mode
+                  obj.material.color.setHex(0x44aaff);
+                  obj.material.opacity = 0.25; // Keep it subtle so Aurora pops
+              }
           }
           if (d.type === 'storm1' || d.type === 'storm2') {
              obj.lookAt(-sunPos.x, -sunPos.y, -sunPos.z);
@@ -285,7 +408,6 @@ function App() {
               if (activeStorms.length > 0) {
                   obj.visible = true;
                   const myStorm = activeStorms[d.id % activeStorms.length];
-
                   const elapsed = currentTimeMs - myStorm.birthTime;
                   let progress = elapsed / myStorm.totalDuration;
                   if (progress > 1.0) progress = 1.0; 
@@ -300,19 +422,31 @@ function App() {
                   const size = baseSize * d.scaleVar;
                   obj.scale.set(size, size, 1);
 
+                  //opacity 
+                  const density = myStorm.density || 3.0;
+                  const baseOpacity = Math.min(1.0, 0.4 + (density / 5.0));
+                  obj.material.opacity = baseOpacity
+
                   // POSITION
                   const sunPosAtBirth = getSunPosition(new Date(myStorm.birthTime));
                   const sunDist = Math.sqrt(sunPosAtBirth.x**2 + sunPosAtBirth.y**2 + sunPosAtBirth.z**2);
                   const dirX = -sunPosAtBirth.x / sunDist;
                   const dirZ = -sunPosAtBirth.z / sunDist;
 
-                  const travelDist = 400 * progress;
-                  const spread = 0.1 + (progress * 2.0); 
-                  
-                  const px = sunPosAtBirth.x + (dirX * travelDist) + (d.offsetX * spread);
-                  const py = (d.offsetY * spread); 
-                  const pz = sunPosAtBirth.z + (dirZ * travelDist) + (d.offsetZ * spread);
+                  // spread
+                  const travelDist = 750 * progress;
+                  const coneWidth = 0.9 + (progress * 2.0); 
+                  const density_spread = 5.0 / (density + 2.0); // making density affect the spread. Higher density = less spread
+                  const spread = coneWidth + density_spread; 
 
+                  const currentDriftY = myStorm.y * progress;
+                  const currentDriftZ = myStorm.z * progress;
+
+                  const px = sunPosAtBirth.x + (dirX * travelDist) + (d.offsetX * spread);
+                  const py = (d.offsetY * spread) + currentDriftY; 
+                  const pz = sunPosAtBirth.z + (dirZ * travelDist) + (d.offsetZ * spread) + currentDriftZ;
+
+                  // shield collision
                   const distToEarth = Math.sqrt(px*px + py*py + pz*pz);
                   if (distToEarth < 130) {
                       const push = 130 / distToEarth;
@@ -342,13 +476,89 @@ function App() {
          />
       </div>
       
-      <div className="absolute top-0 left-0 p-6 z-10 pointer-events-none">
-         <div className="border-l-4 border-cyan-500 pl-4 bg-black/40 backdrop-blur-md pr-6 py-2">
-            <h1 className="text-3xl text-white font-bold tracking-widest font-mono">SOLAR SENTINEL</h1>
-            <p className="text-cyan-400 text-sm font-mono mt-1">
-               {currentData ? `SPEED: ${Math.round(currentData.speed)} km/s` : "OFFLINE"}
-            </p>
-         </div>
+      {/* HUD & OPERATIONS CONSOLE */}
+      <div className="absolute top-0 left-0 p-6 z-20 pointer-events-none max-w-md w-full">
+          
+          {/* MAIN STATUS PANEL */}
+          <div className={`border-l-4 ${status.borderColor} bg-black/80 backdrop-blur-md p-4 shadow-2xl`}>
+              
+              {/* HEADER: The Verdict */}
+              <div className="flex justify-between items-start mb-2">
+                  <div>
+                      <h2 className="text-xs font-mono text-gray-400 tracking-widest mb-1">DEFENSE STATUS</h2>
+                      <h1 className={`text-3xl font-black font-mono tracking-tight ${status.color}`}>
+                          {status.title}
+                      </h1>
+                      <p className={`text-xs font-bold font-mono mt-1 ${status.color.replace('animate-pulse', '')} opacity-80`}>
+                          {status.subtext}
+                      </p>
+                  </div>
+                  {/* Live Indicator */}
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${currentData ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+                    <span className="text-[10px] font-mono text-gray-500">LIVE FEED</span>
+                  </div>
+              </div>
+
+              {/* SEPARATOR */}
+              <div className="h-px w-full bg-gray-700 my-3"></div>
+
+              {/* THE "WHY": Contextual Explanation */}
+              <p className="text-xs font-mono text-gray-300 leading-relaxed opacity-90 mb-4">
+                  {`>> `}{status.desc}
+              </p>
+              <span className={`text-sm font-mono text-white`}>
+                impact time: {currentData ? currentData.impact_time : 0}
+              </span>
+              
+              {/* METRICS GRID: Physics vs ML */}
+              <div className="grid grid-cols-2 gap-4">
+                  
+                  {/* COL 1: The Input (Physics) */}
+                  <div className="bg-white/5 p-2 rounded border border-white/10">
+                      <div className="text-[10px] text-gray-400 font-mono mb-1">INCOMING PRESSURE</div>
+                      <div className="flex items-baseline gap-1">
+                          <span className="text-xl font-bold text-white font-mono">
+                              {currentData ? Math.round(currentData.speed) : 0}
+                          </span>
+                          <span className="text-[10px] text-gray-500">km/s</span>
+                      </div>
+                      {/* Visual Bar for Speed */}
+                      <div className="w-full h-1 bg-gray-700 mt-2 rounded-full overflow-hidden">
+                          <div 
+                              className="h-full bg-blue-500 transition-all duration-500"
+                              style={{ width: `${Math.min(100, ((currentData?.speed || 0) / 800) * 100)}%` }}
+                          ></div>
+                      </div>
+                  </div>
+
+                  {/* COL 2: The Output (ML Prediction) - HIGHLIGHTED */}
+                  <div className={`bg-white/10 p-2 rounded border ${status.borderColor} relative overflow-hidden`}>
+                      {/* Background glow for emphasis */}
+                      <div className={`absolute inset-0 opacity-10 ${status.color.replace('text-', 'bg-')}`}></div>
+                      
+                      <div className="text-[10px] text-cyan-300 font-mono mb-1 flex justify-between">
+                          <span>ML INTEGRITY SCORE</span>
+                          <span className="text-[9px] border border-cyan-500/50 px-1 rounded">AI ACTIVE</span>
+                      </div>
+                      <div className="flex items-baseline gap-1 relative z-10">
+                          <span className={`text-l font-bold font-mono ${status.color}`}>
+                              Kp Index: {currentData ? currentData.kp_pred : 0}
+                          </span>
+                      </div>
+                      {/* Visual Bar for Kp */}
+                      <div className="w-full h-1 bg-gray-700 mt-2 rounded-full overflow-hidden relative z-10">
+                          <div 
+                              className={`h-full transition-all duration-500 ${
+                                  (currentData?.kp || 0) > 5 ? 'bg-red-500' : 'bg-cyan-400'
+                              }`}
+                              style={{ width: `${Math.min(100, ((currentData?.kp || 0) / 9) * 100)}%` }}
+                          ></div>
+                      </div>
+                  </div>
+              </div>
+
+          </div>
       </div>
     </div>
   );

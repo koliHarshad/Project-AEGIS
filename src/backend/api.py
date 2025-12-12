@@ -41,7 +41,7 @@ def get_timestamps():
         conn = get_db_connection()
         cur = conn.cursor()
         # Get last 24 hours (288 records roughly)
-        cur.execute("SELECT timestamp, speed, impact_time FROM solar_wind ORDER BY timestamp DESC LIMIT 288")
+        cur.execute("SELECT timestamp, speed, impact_time, density, bz, kp_pred FROM solar_wind ORDER BY timestamp DESC LIMIT 288")
         rows = cur.fetchall()
         conn.close()
         # Convert list of dicts to list of strings
@@ -49,7 +49,10 @@ def get_timestamps():
             {
                 "timestamp": row['timestamp'],
                 "speed": row['speed'],
-                "impact_time": row['impact_time']           
+                "impact_time": row['impact_time'],
+                "density": row['density'],
+                "bz": row['bz'],
+                "kp": row['kp_pred']
                 } 
             for row in rows
         ]
