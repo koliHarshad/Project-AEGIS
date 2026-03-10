@@ -80,6 +80,19 @@ function App() {
   const [currentData, setCurrentData] = useState(null); 
   const [simulationTime, setSimulationTime] = useState(new Date());
 
+// --- HISTORICAL ANALOG STATE & MOCK DATA ---
+  const [showHistorical, setShowHistorical] = useState(false);
+  const [historicalData, setHistoricalData] = useState(null);
+
+  // --- ML FAILSAFE LOGIC ---
+  const mlKp = currentData?.kp_pred || 0;
+  const histKp = historicalData?.primary_match?.max_kp || 0;
+  const simScore = historicalData?.primary_match?.similarity_percentage || 0;
+  
+  // Trigger warning if ML differs from History by 3+ points AND physics match is strong (>75%)
+  const showFailsafeWarning = Math.abs(mlKp - histKp) >= 3 && simScore >= 75;
+
+
   // ------------------------------------------
   // ASSETS
   // ------------------------------------------
@@ -182,14 +195,17 @@ function App() {
       .catch(e => console.error(e));
   }, []);
 
-  const updateSnapshot = (timestamp) => {
-    fetch(`http://localhost:8000/telemetry/snapshot?timestamp=${timestamp}`)
-        .then(res => res.json())
-        .then(data => setCurrentData(data))
-        .catch(e => console.error(e));
-  };
-
+    const updateSnapshot = (timestamp) => {
+        fetch(`http://localhost:8000/telemetry/snapshot?timestamp=${timestamp}`)
+            .then(res => res.json())
+            .then(data => setCurrentData(data))
+            .catch(e => console.error(e));
+    };
+  
   const handleSliderChange = (e) => {
+    setShowHistorical(false);
+    setHistoricalData(null);
+
     const idx = parseInt(e.target.value);
     setSliderIndex(idx);
     if (processedData[idx]) {
@@ -197,6 +213,26 @@ function App() {
         setSimulationTime(newTime);
         updateSnapshot(processedData[idx].timestamp);
     }
+  };
+  const handleViewHistoricalClick = () => {
+      if (!currentData) return;
+      
+      // Instantly open the panel to show the "LOADING..." UI
+      setShowHistorical(true); 
+
+      const queryParams = new URLSearchParams({
+          speed: currentData.speed,
+          density: currentData.density,
+          bz: currentData.bz,
+          kp: currentData.kp_pred
+      });
+      
+      fetch(`http://localhost:8000/telemetry/historical_match?${queryParams.toString()}`)
+          .then(res => res.json())
+          .then(historyData => {
+              setHistoricalData(historyData);
+          })
+          .catch(e => console.error("History Fetch Error:", e));
   };
 
   // ------------------------------------------
@@ -273,6 +309,11 @@ function App() {
 
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden">
+        <style>{`
+            .no-scrollbar::-webkit-scrollbar { display: none; }
+            .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        `}</style>
+
       <Globe
         ref={globeEl}
         onGlobeReady={handleGlobeReady}
@@ -412,19 +453,22 @@ function App() {
       {/* ================================================================================== */}
       {/* LEFT PANEL: SATELLITE SOURCE DATA (The "Input")                                  */}
       {/* ================================================================================== */}
-      <div className="absolute top-0 left-0 p-6 z-20 pointer-events-none max-w-sm w-full">
-          <div className="bg-black/80 backdrop-blur-md border-l-4 border-cyan-500 p-4 shadow-2xl rounded-r-lg">
+        <div className="absolute top-0 left-0 p-6 z-20 pointer-events-none max-w-sm w-full">
+                
+            {!showHistorical ? (   
+            /* --- STATE 1: LIVE SATELLITE FEED (Your Existing Code) --- */ 
+            <div className="bg-black/80 backdrop-blur-md border-l-4 border-cyan-500 p-4 shadow-2xl rounded-r-lg">
               
-              {/* Header: Detection Time */}
-              <div className="mb-3 border-b border-gray-700 pb-2">
-                  <div className="flex items-center gap-2 mb-1">
+                {/* Header: Detection Time */}
+                <div className="mb-3 border-b border-gray-700 pb-2">
+                    <div className="flex items-center gap-2 mb-1">
                       <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
                       <h2 className="text-[10px] font-mono text-cyan-400 tracking-widest">LIVE SATELLITE FEED</h2>
-                  </div>
-                  <h1 className="text-xl text-white font-mono font-bold">
-                     <span className="text-xs text-gray-400">DETECTED AT </span> {currentData ? new Date(currentData.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "--:--"}
-                  </h1>
-              </div>
+                     </div>
+                    <h1 className="text-xl text-white font-mono font-bold">
+                        <span className="text-xs text-gray-400">DETECTED AT </span> {currentData ? new Date(currentData.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "--:--"}
+                    </h1>
+                </div>
 
               <div className="grid grid-cols-2 gap-4">
 
@@ -500,15 +544,140 @@ function App() {
                     </div>
                 </div>
 
-              </div>
-          </div>
-      </div>
+            </div>
+         </div>
+
+            ) : !historicalData ? (
+            /* --- LOADING STATE --- */
+            <div className="bg-black/80 backdrop-blur-md border-l-4 border-slate-500 p-6 shadow-2xl rounded-r-lg pointer-events-auto">
+                <h2 className="text-cyan-400 font-mono text-sm animate-pulse">CALCULATING HISTORICAL MATCH...</h2>
+            </div>
+
+            ) : (
+            /* --- STATE 2: HISTORICAL ANALOG VIEW --- */
+            <div className="bg-black/80 backdrop-blur-md border-l-4 border-slate-500 p-4 shadow-2xl rounded-r-lg pointer-events-auto max-h-[80vh] flex flex-col">
+                
+                {/* Header & Back Button */}
+                <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                    <h2 className="text-[10px] font-mono text-slate-400 tracking-widest">HISTORICAL CONTEXT</h2>
+                    <button 
+                        onClick={() => setShowHistorical(false)} 
+                        className="text-[10px] font-bold text-cyan-400 hover:text-cyan-300 font-mono flex items-center gap-1"
+                    >
+                        <span>← BACK TO LIVE DATA</span>
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-2 no-scrollbar">
+                    {/* --- ML FAILSAFE WARNING BANNER --- */}
+                    {showFailsafeWarning && (
+                        <div className="bg-red-900/40 border border-red-500 p-3 rounded mb-4 shadow-[0_0_15px_rgba(239,68,68,0.3)]">
+                            <div className="flex items-center gap-2 mb-1">
+                                <span className="text-red-500 font-bold text-xs font-mono animate-pulse">⚠️ ML DISCREPANCY DETECTED</span>
+                            </div>
+                            <p className="text-[10px] text-red-200 font-mono leading-tight">
+                                Model predicts Kp {mlKp.toFixed(1)}, but raw physical telemetry is a {simScore}% match for a historical Kp {histKp.toFixed(1)} event. Possible ML false negative. <strong className="text-white">Prioritize deterministic physics.</strong>
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Primary Match */}
+                    <div className="mb-4 ">
+                        <h1 className="text-3xl font-bold font-mono text-green-400 tracking-tighter mb-1">
+                            {historicalData.primary_match.similarity_percentage}% MATCH
+                        </h1>
+                        <h2 className="text-xl font-bold text-white font-mono">{historicalData.primary_match.storm_name}</h2>
+                        <p className="text-xs text-gray-400 font-mono mb-3">{historicalData.primary_match.date}</p>
+                        
+                        <div className="bg-white/5 p-3 border border-white/10 rounded mb-3">
+                            <p className="text-[11px] text-gray-300 font-mono leading-relaxed">
+                                {historicalData.primary_match.impact_summary}
+                            </p>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            {historicalData.primary_match.affected_sectors.map(sector => (
+                                <span key={sector} className="text-[9px] border border-slate-500 text-slate-300 px-2 py-1 rounded">
+                                    {sector}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* parameters of the primary match */}
+                    <div className="grid grid-cols-2 gap-4 pr-2 mt-2 mb-4 border-t border-gray-700 pt-3 ">
+                        <h3 className="text-l font-bold text-white font-mono col-span-2">Primary match's parameters</h3>
+
+                        {/* Metric: Speed (Incoming Pressure) */}
+                        <div className="bg-white/5 p-3 rounded border border-white/10">
+                            <div className="text-[10px] text-gray-400 font-mono mb-1">INCOMING SOLAR WIND</div>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-2xl font-bold text-white font-mono">
+                                    {historicalData.primary_match.avg_speed ? historicalData.primary_match.avg_speed : 0}
+                                </span>
+                                <span className="text-xs text-gray-500 font-mono">km/s</span>
+                            </div>
+                        </div>
+
+                        {/* Metric: Density */}
+                        <div className="bg-white/5 p-3 rounded border border-white/10">
+                            <div className="text-[10px] text-gray-400 font-mono mb-1">PROTON DENSITY</div>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-2xl font-bold text-white font-mono">
+                                    {historicalData.primary_match.avg_density ? historicalData.primary_match.avg_density : 0}
+                                </span>
+                                <span className="text-xs text-gray-500 font-mono">p/cm<sup>3</sup></span>
+                            </div>
+                        </div>
+                    
+                        {/* Metric: Pressure */}
+                        <div className="bg-white/5 p-3 rounded border border-white/10">
+                            <div className="text-[10px] text-gray-400 font-mono mb-1">PRESSURE</div>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-2xl font-bold text-white font-mono">
+                                    {historicalData.primary_match.avg_speed && historicalData.primary_match.avg_density ? (1.6726e-6 * historicalData.primary_match.avg_density * historicalData.primary_match.avg_speed * historicalData.primary_match.avg_speed).toFixed(2) : 0}
+                                </span>
+                                <span className="text-xs text-gray-500 font-mono">npa</span>
+                            </div>
+                        </div>
+
+                        {/* Metric: Bz */}
+                        <div className="bg-white/5 p-3 rounded border border-white/10">
+                            <div className="text-[10px] text-gray-400 font-mono mb-1">INTERPLANETARY MAGNETIC FIELD</div>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-2xl font-bold text-white font-mono">
+                                    {historicalData.primary_match.min_bz ? historicalData.primary_match.min_bz : 0}
+                                </span>
+                                <span className="text-xs text-gray-500 font-mono">nT</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Comparison List (Scrollable) */}
+                    <div className="pr-2 mt-2 border-t border-gray-700 pt-3">
+                        <h3 className="text-l font-bold text-white mb-4">Database Comparisons</h3>
+                        <div className="flex flex-col gap-2">
+                            {historicalData.all_historical_storms.map((storm, idx) => (
+                                <div key={idx} className="flex justify-between items-center bg-white/5 p-2 rounded border border-white/10 hover:bg-white/10 transition-colors cursor-default">
+                                    <div>
+                                        <div className="text-xs text-white font-mono">{storm.storm_name}</div>
+                                        <div className="text-[9px] text-gray-500 font-mono">Max Kp: {storm.max_kp.toFixed(1)}</div>
+                                    </div>
+                                    <div className="text-sm font-bold text-green-400 font-mono">{storm.similarity_percentage}%</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            )}
+        </div>
 
       {/* ================================================================================== */}
       {/* RIGHT PANEL: GEOSPACE IMPACT SIMULATION (The "Output")                           */}
       {/* ================================================================================== */}
       <div className="absolute top-0 right-0 p-6 z-20 pointer-events-none max-w-sm w-full text-right">
-          <div className={`bg-black/80 backdrop-blur-md border-r-4 ${status.borderColor} p-4 shadow-2xl rounded-l-lg`}>
+          <div className={`bg-black/80 backdrop-blur-md border-r-4 ${status.borderColor} p-4 shadow-2xl rounded-l-lg `}>
               
               {/* Header: Impact Time */}
               <div className="mb-3 border-b border-gray-700 pb-2 flex flex-col items-end">
@@ -596,6 +765,15 @@ function App() {
                     </div>
                 </div>
 
+            </div>
+            {/* HISTORICAL ANALOG TRIGGER BUTTON */}
+            <div className="pointer-events-auto">
+                <button 
+                    onClick={() => {handleViewHistoricalClick();}}
+                    className={`mt-4 w-full bg-transparent border border-gray-600 hover:bg-cyan-500/10 hover:border-cyan-400 transition-all py-2 rounded flex items-center justify-center gap-2 ${showHistorical ? 'hidden' : ''}`}
+                >
+                    <span className="text-xs font-bold font-mono text-cyan-400 tracking-widest">VIEW HISTORICAL ANALOG</span>
+                </button>
             </div>
 
           </div>

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
+from src.backend.similarity_engine import matcher
 
 app = FastAPI()
 
@@ -79,4 +80,53 @@ def get_snapshot(timestamp: str):
         return {} # Return empty object if not found
     except Exception as e:
         print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/telemetry/historical_match")
+def get_historical_match(speed: float = 400.0, density: float = 5.0, bz: float = 0.0, kp: float = 2.0):
+    """
+    Finds the closest historical analog using the Similarity Engine.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM historical_storms")
+        storms = cur.fetchall()
+        conn.close()
+
+        # The live telemetry vector
+        live_vector = [kp, bz, speed, density]
+        
+        results = []
+        for storm in storms:
+            # The historical storm vector
+            hist_vector = [storm['max_kp'], storm['min_bz'], storm['avg_speed'], storm['avg_density']]
+            
+            # Let the Engine do the heavy mathematical lifting
+            sim_percentage = matcher.calculate_similarity(live_vector, hist_vector)
+
+            results.append({
+                "storm_name": storm['storm_name'],
+                "date": storm['event_date'].strftime('%b %d, %Y'),
+                "max_kp": storm['max_kp'],
+                "avg_speed": storm['avg_speed'],
+                "avg_density": storm['avg_density'],
+                "min_bz": storm['min_bz'],
+                "similarity_percentage": sim_percentage,
+                "impact_summary": storm['impact_summary'],
+                "affected_sectors": storm['affected_sectors']
+            })
+
+        # Sort from highest similarity to lowest
+        results = sorted(results, key=lambda x: x['similarity_percentage'], reverse=True)
+        top_comparisons = results[1:4] if len(results) > 1 else []
+
+        return {
+            "primary_match": results[0] if results else {},
+            "all_historical_storms": top_comparisons
+        }
+
+    except Exception as e:
+        print(f"Error calculating historical match: {e}")
         raise HTTPException(status_code=500, detail=str(e))
