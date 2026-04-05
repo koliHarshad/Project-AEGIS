@@ -130,3 +130,59 @@ def get_historical_match(speed: float = 400.0, density: float = 5.0, bz: float =
     except Exception as e:
         print(f"Error calculating historical match: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/telemetry/kp_history")
+def get_kp_history():
+    """
+    Fetches the last 24 hours of recorded data (based on the latest database entry), 
+    aligning them chronologically for the frontend graph.
+    """
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1. Get ML Predictions (anchored to the absolute latest impact_time in the DB)
+        cur.execute("""
+            SELECT impact_time as time, kp_pred as predicted_kp
+            FROM solar_wind
+            WHERE impact_time >= (SELECT MAX(impact_time) FROM solar_wind) - INTERVAL '24 HOURS'
+            ORDER BY impact_time ASC
+        """)
+        predictions = cur.fetchall()
+
+        # 2. Get Ground Truth Actuals for that exact same 24-hour window
+        cur.execute("""
+            SELECT observed_time as time, actual_kp
+            FROM ground_truth_kp
+            WHERE observed_time >= (SELECT MAX(impact_time) FROM solar_wind) - INTERVAL '24 HOURS'
+            ORDER BY observed_time ASC
+        """)
+        truths = cur.fetchall()
+        conn.close()
+
+        # 3. Merge the two timelines
+        combined = []
+        for p in predictions:
+            if p['time']:
+                combined.append({
+                    "time": p['time'].isoformat(),
+                    "predicted_kp": round(p['predicted_kp'], 2),
+                    "actual_kp": None # Null because it's a prediction minute
+                })
+
+        for t in truths:
+            if t['time']:
+                combined.append({
+                    "time": t['time'].isoformat(),
+                    "predicted_kp": None, 
+                    "actual_kp": float(t['actual_kp']) # The 3-hour block
+                })
+
+        # Sort everything chronologically so the graph draws left-to-right perfectly
+        combined.sort(key=lambda x: x['time'])
+
+        return combined
+
+    except Exception as e:
+        print(f"Error fetching Kp history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

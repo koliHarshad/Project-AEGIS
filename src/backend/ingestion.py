@@ -77,6 +77,41 @@ def get_last_timestamp():
     except Exception:
         return None
 
+def fetch_actual_kp():
+    """
+    Fetches the official 3-hour ground truth Kp index from NOAA
+    and stores it in the isolated ground_truth_kp table.
+    """
+    url = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        
+        # Ensure you are using your existing db connection function here
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # The NOAA JSON returns headers in index 0. 
+        # Data format: ["time_tag", "Kp", "a_running", "station_count"]
+        # We slice [1:] to skip the header row.
+        for row in data[1:]:
+            time_tag = row[0]
+            kp_val = float(row[1])
+            
+            # ON CONFLICT DO NOTHING ensures we only add new 3-hour blocks
+            cur.execute("""
+                INSERT INTO ground_truth_kp (observed_time, actual_kp)
+                VALUES (%s, %s)
+                ON CONFLICT (observed_time) DO NOTHING
+            """, (time_tag, kp_val))
+            
+        conn.commit()
+        conn.close()
+        print("Successfully synchronized Ground Truth Kp.")
+        
+    except Exception as e:
+        print(f"Error fetching actual Kp: {e}")
+
 def run_pipeline():
     
     print(f"[{datetime.now()}] 🛰️  Contacting NOAA...")
@@ -101,6 +136,10 @@ def run_pipeline():
         print(f"❌ API Error: {e}")
         return
     
+    #1.2 Fetch the actual Kp index and store in the database
+    fetch_actual_kp()
+
+
     # 2. SLICE TO NEW DATA ONLY
     last_saved = get_last_timestamp()
 

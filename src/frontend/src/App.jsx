@@ -1,6 +1,7 @@
 import React, { useRef, useState, useMemo, useEffect } from 'react';
 import Globe from 'react-globe.gl';
 import * as THREE from 'three';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 // ==========================================
 // SECTION 1: UTILITY TOOLS
@@ -234,6 +235,16 @@ function App() {
           })
           .catch(e => console.error("History Fetch Error:", e));
   };
+
+  const [kpHistory, setKpHistory] = useState([]);
+  const [showGraph, setShowGraph] = useState(false);
+  // Fetch the 24-hour graph data on load
+  useEffect(() => {
+    fetch('http://localhost:8000/telemetry/kp_history')
+      .then(res => res.json())
+      .then(data => setKpHistory(data))
+      .catch(e => console.error("Failed to fetch Kp History:", e));
+  }, []);
 
   // ------------------------------------------
   // SCENE LIGHTING
@@ -544,6 +555,7 @@ function App() {
                     </div>
                 </div>
 
+
             </div>
          </div>
 
@@ -776,36 +788,79 @@ function App() {
                 </button>
             </div>
 
+
+
           </div>
       </div>
+      {/* ================================================================================== */}
+      {/* BOTTOM SLIDER & ANALYSIS DECK                                                      */}
+      {/* ================================================================================== */}
+      <div className="absolute bottom-0 w-full p-8 bg-gradient-to-t from-black via-black/90 to-transparent z-10 flex flex-col items-center">
 
-      {/* ================================================================================== */}
-      {/* BOTTOM SLIDER: TIMELINE CONTROL                                                  */}
-      {/* ================================================================================== */}
-      <div className="absolute bottom-0 w-full p-8 bg-gradient-to-t from-black via-black/80 to-transparent z-10">
-         <div className="flex justify-between items-end mb-2 font-mono text-xs">
-             <div className="text-gray-500">
-                PAST (24h)
+         {/* --- 1. THE RELIABILITY GRAPH (Conditionally Rendered) --- */}
+         {showGraph && (
+             <div className="w-full max-w-5xl h-36 bg-black/50 backdrop-blur-md border border-white/10 rounded-lg p-4 pointer-events-auto shadow-2xl transition-all">
+                  <div className="flex justify-between items-center mb-2">
+                      <span className="text-xs text-gray-400 font-mono tracking-widest">24H PREDICTION RELIABILITY</span>
+                      <span className="text-[10px] border border-cyan-500/50 bg-cyan-500/10 text-cyan-400 px-2 py-0.5 rounded animate-pulse mr-28">LIVE VALIDATION</span>
+                  </div>
+                  
+                  {/* Graph Container */}
+                  <div className="h-24 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={kpHistory} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                              
+                              <XAxis 
+                                  dataKey="time" 
+                                  tickFormatter={(timeStr) => new Date(timeStr).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                  stroke="#666" 
+                                  tick={{ fontSize: 10, fill: '#888' }} 
+                                  dy={10} 
+                              />
+                              <YAxis domain={[0, 9]} stroke="#666" tick={{ fontSize: 10, fill: '#888' }} />
+                              
+                              <Tooltip 
+                                  contentStyle={{ backgroundColor: 'rgba(0,0,0,0.9)', borderColor: '#444', fontSize: '11px', fontFamily: 'monospace' }}
+                                  labelFormatter={(label) => new Date(label).toLocaleTimeString()}
+                              />
+                              
+                              <Line type="monotone" dataKey="predicted_kp" name="ML Prediction" stroke="#22d3ee" strokeWidth={2} dot={false} connectNulls={true} />
+                              <Line type="stepAfter" dataKey="actual_kp" name="NOAA Actual (3hr)" stroke="#e5e7eb" strokeWidth={2} strokeDasharray="4 4" dot={{ r: 3, fill: '#fff' }} connectNulls={true} />
+                          </LineChart>
+                      </ResponsiveContainer>
+                  </div>
              </div>
-             
-             {/* CENTER LABEL: Shows the IMPACT time, clarifying the visualization */}
+         )}
+
+         {/* --- GRAPH TOGGLE BUTTON --- */}
+         <div className="w-full flex justify-start mb-2 pointer-events-auto">
+             <button 
+                 onClick={() => setShowGraph(!showGraph)}
+                 className="text-[10px] font-mono border border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10 px-3 py-1.5 rounded transition-all flex items-center gap-2 backdrop-blur-sm"
+             >
+                 <span>{showGraph ? "▼ HIDE RELIABILITY GRAPH" : "▲ SHOW 24H RELIABILITY GRAPH"}</span>
+                 {!showGraph && <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse ml-1"></span>}
+             </button>
+         </div>
+         
+         {/* --- 2. THE EXISTING TIMELINE SLIDER --- */}
+         <div className="w-full flex justify-between items-end mb-2 font-mono text-xs">
+             <div className="text-gray-500">PAST (24h)</div>
              <div className="text-center">
                  <div className="text-gray-400 text-[10px] mb-1">VISUALIZATION TIME</div>
                  <div className="text-xl text-white font-bold">
                     {currentData ? currentData.impact_time.toString().replace("T", " ").split(".")[0] : "LOADING..."}
                  </div>
              </div>
-
-             <div className="text-cyan-400">
-                NOW
-             </div>
+             <div className="text-cyan-400">NOW</div>
          </div>
 
          <input 
             type="range" min="0" max={Math.max(0, processedData.length - 1)} step="1"
             value={sliderIndex}
             onChange={handleSliderChange}
-            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-300 transition-all"
+            className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-300 transition-all pointer-events-auto"
          />
       </div>
 
