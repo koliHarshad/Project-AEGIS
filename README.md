@@ -36,7 +36,7 @@ Aegis is engineered as a highly decoupled microservice architecture running insi
 
 ## 🚀 Tech Stack
 
-* **Frontend**: React.js, Vite, Three.js, React-Globe.gl, Recharts, Tailwind CSS
+* **Frontend**: React.js, Three.js, React-Globe.gl, Recharts, Tailwind CSS
 * **Backend**: Python 3.10, FastAPI, Scikit-Learn, Joblib, Pandas, NumPy
 * **Database**: PostgreSQL 15 + `psycopg2`
 * **DevOps**: Docker, Docker Compose
