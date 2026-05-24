@@ -6,24 +6,24 @@ Aegis (StormWatch) is a full-stack, multi-container microservice platform design
 ---
 
 ## 📸 System Previews & Operational Snapshots
+<img width="1428" height="687" alt="Picture3" src="https://github.com/user-attachments/assets/66720f49-7a7b-492b-93d5-642a7899dc71" />
+<img width="1428" height="674" alt="Picture4" src="https://github.com/user-attachments/assets/324e4cca-96ef-419c-8bd2-9fd19301a086" />
+<img width="1423" height="672" alt="Picture5" src="https://github.com/user-attachments/assets/71efb7da-89d1-4e51-ada3-ec8d56b45523" />
 
 ### 1. High-Confidence Geomagnetic Storm Event
-*When a severe solar anomaly hits the system, the ML pipeline tracks the sustained pressure while the 3D magnetosphere shield scales and pulses dynamically to reflect physical compression.*
-
-![High-Confidence G5 Storm Simulation](./screenshots/storm_simulation_active.jpg)
+<img width="1379" height="651" alt="Picture1" src="https://github.com/user-attachments/assets/c25705a8-d228-4a05-b131-28e85dd4ce76" />
+*When a severe solar anomaly hits the system, the ML pipeline tracks the sustained pressure and predicts the Kp-Index of storm 
+while the 3D magnetosphere shield scales and pulses dynamically to reflect physical compression.*
 
 ### 2. Historical Failsafe & ML Discrepancy Detection
-*An operational view showing the 'Historical Context' panel active. When the Machine Learning model underpredicts a threat but raw telemetry matches a past disaster, the Weighted Manhattan Distance algorithm triggers a Red Failsafe Banner.*
-
-![ML Discrepancy Failsafe Banner](./screenshots/failsafe_discrepancy_active.jpg)
+<img width="1918" height="906" alt="failed to predict" src="https://github.com/user-attachments/assets/1f9cf468-9f96-4ce3-9481-113caf467cb3" />
+*An operational view showing the 'Historical Analog' panel active. When the Machine Learning model underpredicts a threat but raw telemetry matches a past disaster, the Weighted Manhattan Distance algorithm triggers a Red Failsafe Banner.*
 
 ---
 
 ## 🛠️ Core Architecture & Data Flow
 
 Aegis is engineered as a highly decoupled microservice architecture running inside localized Docker containers to isolate ingestion overhead from user-facing API routes.
-
-![System Workflow Diagram](./screenshots/workflow_diagram.png)
 
 1. **Data Ingestion Worker (`ingestion.py`)**: Continuously fetches live, high-frequency L1 satellite plasma and magnetic json streams from NOAA SWPC. It resamples 1-minute streams into clean 5-minute temporal blocks, handles missing sensor metrics via linear interpolation, and calculates physical particle travel delay.
 2. **Machine Learning Inference**: Implements an optimized Random Forest model utilizing custom-engineered 1-hour, 3-hour, and 6-hour lag features (`Bz_lag6`, `Flow_Speed_lag1`) alongside rolling windows (`Speed_Mean_6h`) to provide stateless trees with temporal memory context.
@@ -40,5 +40,3 @@ Aegis is engineered as a highly decoupled microservice architecture running insi
 * **Backend**: Python 3.10, FastAPI, Scikit-Learn, Joblib, Pandas, NumPy
 * **Database**: PostgreSQL 15 + `psycopg2`
 * **DevOps**: Docker, Docker Compose
-
----
