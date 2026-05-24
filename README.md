@@ -1,5 +1,5 @@
 # Aegis (StormWatch) 🛰️🌍
-> **An AI-Driven Space Weather Early Warning System with Physics-Based Historical Failsafe Engine**
+> **Space Weather Early Warning System with Physics-Based Historical Failsafe Engine**
 
 Aegis (StormWatch) is a full-stack, multi-container microservice platform designed to translate chaotic solar wind telemetry into precise, actionable alerts for critical infrastructure operators. Moving away from abstract scientific plots, Aegis renders a real-time 3D geospace simulation alongside a predictive Machine Learning pipeline to anticipate geomagnetic storm severity ($Kp\text{ Index}$) before particles breach Earth's magnetosphere.
 
